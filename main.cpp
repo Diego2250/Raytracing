@@ -38,7 +38,7 @@ SDL_Surface* loadTexture(const std::string& file) {
 Skybox skybox("../assets/sky.png");
 
 
-Color getColorFromSurface(SDL_Surface* surface, float u, float v) {
+Color SurfaceColor(SDL_Surface* surface, float u, float v) {
     Color color = {0, 0, 0, 0};
 
     if (surface != nullptr) {
@@ -97,44 +97,42 @@ Color castRay(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const s
         return skybox.getColor(rayDirection);
     }
 
-    glm::vec3 lightDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * glm::normalize(light.position - intersect.point);
-    glm::vec3 viewDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * glm::normalize(rayOrigin - intersect.point);
+    glm::vec3 lightDir = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * glm::normalize(light.position - intersect.point);
+    glm::vec3 viewDir = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * glm::normalize(rayOrigin - intersect.point);
 
-    glm::vec3 reflectDirObjSpace = glm::reflect(-lightDirObjSpace, intersect.normal);
+    glm::vec3 reflectDir = glm::reflect(-lightDir, intersect.normal);
 
-    float shadowIntensity = castShadow(intersect.point, lightDirObjSpace, hitObject);
+    float shadowIntensity = castShadow(intersect.point, lightDir, hitObject);
 
-    float diffuseLightIntensity = glm::max(0.0f, glm::dot(intersect.normal, lightDirObjSpace));
-    float specLightIntensity = std::pow(glm::max(0.0f, glm::dot(viewDirObjSpace, reflectDirObjSpace)), hitObject->material.specularCoefficient);
+    float diffuseLightIntensity = glm::max(0.0f, glm::dot(intersect.normal, lightDir));
+    float specLightIntensity = std::pow(glm::max(0.0f, glm::dot(viewDir, reflectDir)), hitObject->material.specularCoefficient);
 
     Color reflectedColor(0.0f, 0.0f, 0.0f);
     if (hitObject->material.reflectivity > 0) {
         glm::vec3 origin = intersect.point + intersect.normal * BIAS;
-        glm::vec3 reflectedRayDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * reflectDirObjSpace;
+        glm::vec3 reflectedRayDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * reflectDir;
         reflectedColor = castRay(origin, reflectedRayDirObjSpace, recursion + 1);
     }
 
-    Color refractedColor(0.0f, 0.0f, 0.0f);
+    Color RefractedC(0.0f, 0.0f, 0.0f);
     if (hitObject->material.transparency > 0) {
         glm::vec3 origin = intersect.point - intersect.normal * BIAS;
         glm::vec3 refractDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * glm::refract(rayDirection, intersect.normal, hitObject->material.refractionIndex);
-        refractedColor = castRay(origin, refractDirObjSpace, recursion + 1);
+        RefractedC = castRay(origin, refractDirObjSpace, recursion + 1);
     }
 
     Material mat = hitObject->material;
-    Color diffusecolor;
+    Color diffuseC;
     if (mat.texture != nullptr) {
-        diffusecolor = getColorFromSurface(mat.texture, intersect.u, intersect.v);
+        diffuseC = SurfaceColor(mat.texture, intersect.u, intersect.v);
     } else {
-        diffusecolor = mat.diffuse;
+        diffuseC = mat.diffuse;
     }
 
-    // Cálculos de luz difusa y especular
-    Color diffuseLight = diffusecolor * light.intensity * diffuseLightIntensity * hitObject->material.albedo * shadowIntensity;
-    Color specularLight = light.color * light.intensity * specLightIntensity * hitObject->material.specularAlbedo * shadowIntensity;
+    Color diffuseL = diffuseC * light.intensity * diffuseLightIntensity * hitObject->material.albedo * shadowIntensity;
+    Color SpecularL = light.color * light.intensity * specLightIntensity * hitObject->material.specularAlbedo * shadowIntensity;
 
-    // Combinación de los componentes de iluminación y efectos
-    Color color = (diffuseLight + specularLight) * (1.0f - hitObject->material.reflectivity - hitObject->material.transparency) + reflectedColor * hitObject->material.reflectivity + refractedColor * hitObject->material.transparency;
+    Color color = (diffuseL + SpecularL) * (1.0f - hitObject->material.reflectivity - hitObject->material.transparency) + reflectedColor * hitObject->material.reflectivity + RefractedC * hitObject->material.transparency;
     return color;
 }
 
@@ -418,7 +416,7 @@ void render() {
 
 
             Color pixelColor = castRay(camera.position, rayDirection);
-            //std::cout << pixelColor.i << std::endl;
+
             if (pixelColor.i != 1) {
                 point(glm::vec2(x, y), pixelColor);
             }
@@ -464,7 +462,6 @@ int main(int argc, char* argv[]) {
     Uint32 currentTime = startTime;
 
     setUp();
-    float rotationSpeed = 0.5f;
     bool reRender = true;
     while (running) {
         while (SDL_PollEvent(&event)) {

@@ -12,6 +12,6 @@ public:
     Color getColor(const glm::vec3& direction) const;
 
 private:
-    SDL_Surface* textureSurface;
-    void loadTexture(const std::string& textureFilePath);
+    SDL_Surface* texture;
+    void loadAndConvertTexture(const std::string& textureFilePath);
 };

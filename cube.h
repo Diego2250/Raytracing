@@ -11,7 +11,9 @@ public:
 
     Intersect rayIntersect(const glm::vec3& rayOrigin, const glm::vec3& rayDirection) const override;
 
+
 private:
     glm::vec3 minVertex;
     glm::vec3 maxVertex;
+
 };
