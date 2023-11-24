@@ -7,11 +7,11 @@
 
 class Cube : public Object {
 public:
-    Cube(const glm::vec3& minCorner, const glm::vec3& maxCorner, const Material& mat);
+    Cube(const glm::vec3& minVertex, const glm::vec3& maxVertex, const Material& material);
 
     Intersect rayIntersect(const glm::vec3& rayOrigin, const glm::vec3& rayDirection) const override;
 
 private:
-    glm::vec3 minCorner;
-    glm::vec3 maxCorner;
+    glm::vec3 minVertex;
+    glm::vec3 maxVertex;
 };

@@ -1,20 +1,16 @@
 #include <SDL.h>
 #include <SDL_events.h>
 #include <SDL_render.h>
-#include <cstdlib>
-#include "glm/ext/quaternion_geometric.hpp"
 #include "glm/geometric.hpp"
 #include <string>
 #include "glm/glm.hpp"
 #include <vector>
-#include "print.h"
 #include <SDL_image.h>
 #include "skybox.h"
 
 #include "color.h"
 #include "intersect.h"
 #include "object.h"
-#include "sphere.h"
 #include "light.h"
 #include "camera.h"
 #include "cube.h"
@@ -43,9 +39,9 @@ Skybox skybox("../assets/sky.png");
 
 
 Color getColorFromSurface(SDL_Surface* surface, float u, float v) {
-    Color color = {0, 0, 0, 0};  // Inicializa el color como negro por defecto
+    Color color = {0, 0, 0, 0};
 
-    if (surface != NULL) {
+    if (surface != nullptr) {
         if (u < 0) u += 1.0f;
         if (v < 0) v += 1.0f;
 
@@ -111,7 +107,6 @@ Color castRay(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const s
     float diffuseLightIntensity = glm::max(0.0f, glm::dot(intersect.normal, lightDirObjSpace));
     float specLightIntensity = std::pow(glm::max(0.0f, glm::dot(viewDirObjSpace, reflectDirObjSpace)), hitObject->material.specularCoefficient);
 
-    // Reflección y refracción
     Color reflectedColor(0.0f, 0.0f, 0.0f);
     if (hitObject->material.reflectivity > 0) {
         glm::vec3 origin = intersect.point + intersect.normal * BIAS;
@@ -197,7 +192,7 @@ void setUp() {
     );
 
     // diamond block
-    Material spawner(
+    Material obsidian(
             Color(80, 0, 0),   // diffuse
             0.3,
             0.5,
@@ -261,24 +256,26 @@ void setUp() {
     objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 3.0f), glm::vec3(1.0f, -2.0f, 4.0f), iron));
     objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 4.0f), glm::vec3(1.0f, -2.0f, 5.0f), stone));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -2.0f, 1.0f), glm::vec3(1.0f, -1.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(1.0f, -2.0f, 1.0f), glm::vec3(2.0f, -1.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -2.0f, 1.0f), glm::vec3(0.0f, -1.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(-2.0f, -2.0f, 1.0f), glm::vec3(-1.0f, -1.0f, 2.0f), spawner));
+    // Estructura portal
 
-    objects.push_back(new Cube(glm::vec3(1.0f, -1.0f, 1.0f), glm::vec3(2.0f, 0.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(1.0f, 0.0f, 1.0f), glm::vec3(2.0f, 1.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(2.0f, 2.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(0.0f, -2.0f, 1.0f), glm::vec3(1.0f, -1.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(1.0f, -2.0f, 1.0f), glm::vec3(2.0f, -1.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -2.0f, 1.0f), glm::vec3(0.0f, -1.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -2.0f, 1.0f), glm::vec3(-1.0f, -1.0f, 2.0f), obsidian));
 
-    objects.push_back(new Cube(glm::vec3(-2.0f, -1.0f, 1.0f), glm::vec3(-1.0f, 0.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(-2.0f, 0.0f, 1.0f), glm::vec3(-1.0f, 1.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(-2.0f, 1.0f, 1.0f), glm::vec3(-1.0f, 2.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(1.0f, -1.0f, 1.0f), glm::vec3(2.0f, 0.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(1.0f, 0.0f, 1.0f), glm::vec3(2.0f, 1.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(2.0f, 2.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), obsidian));
 
+    objects.push_back(new Cube(glm::vec3(-2.0f, -1.0f, 1.0f), glm::vec3(-1.0f, 0.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 0.0f, 1.0f), glm::vec3(-1.0f, 1.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 1.0f, 1.0f), glm::vec3(-1.0f, 2.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), obsidian));
 
+    //portal
     objects.push_back(new Cube(glm::vec3(-1.0f, 0.0f, 1.0f), glm::vec3(0.0f, 1.0f, 2.0f), portal));
     objects.push_back(new Cube(glm::vec3(-1.0f, -1.0f, 1.0f), glm::vec3(0.0f, 0.0f, 2.0f), portal));
     objects.push_back(new Cube(glm::vec3(-1.0f, 1.0f, 1.0f), glm::vec3(0.0f, 2.0f, 2.0f), portal));
@@ -286,13 +283,10 @@ void setUp() {
     objects.push_back(new Cube(glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(1.0f, 1.0f, 2.0f), portal));
     objects.push_back(new Cube(glm::vec3(0.0f, 1.0f, 1.0f), glm::vec3(1.0f, 2.0f, 2.0f), portal));
 
-
-
-    objects.push_back(new Cube(glm::vec3(0.0f, 2.0f, 1.0f), glm::vec3(1.0f, 3.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(-1.0f, 2.0f, 1.0f), glm::vec3(0.0f, 3.0f, 2.0f), spawner));
-    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), spawner));
-
+    objects.push_back(new Cube(glm::vec3(0.0f, 2.0f, 1.0f), glm::vec3(1.0f, 3.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(-1.0f, 2.0f, 1.0f), glm::vec3(0.0f, 3.0f, 2.0f), obsidian));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), obsidian));
 
     objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -1.0f), glm::vec3(0.0f, -2.0f, 0.0f), dirt));
     objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, 0.0f), glm::vec3(0.0f, -2.0f, 1.0f), stone));
@@ -489,12 +483,10 @@ int main(int argc, char* argv[]) {
                         reRender = true;
                         break;
                     case SDLK_LEFT:
-                        print("left");
                         camera.rotate(-1.0f, 0.0f);
                         reRender = true;
                         break;
                     case SDLK_RIGHT:
-                        print("right");
                         camera.rotate(1.0f, 0.0f);
                         reRender = true;
                         break;
