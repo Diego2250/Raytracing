@@ -9,6 +9,7 @@
 #include <vector>
 #include "print.h"
 #include "cube.h"
+#include "skybox.h"
 
 #include "color.h"
 #include "object.h"
@@ -26,7 +27,7 @@ SDL_Renderer* renderer;
 std::vector<Object*> objects;
 Light light(glm::vec3(5.0, 4, 10), 1.0f, Color(255, 255, 255));
 Camera camera(glm::vec3(0.0, 0.0, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 10.0f);
-
+Skybox skybox("../assets/sky.png");
 
 void point(glm::vec2 position, Color color) {
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
@@ -63,7 +64,7 @@ Color castRay(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const s
     }
 
     if (!intersect.isIntersecting || recursion >= MAX_RECURSION_DEPTH) {
-        return Color(173, 216, 230);
+        return skybox.getColor(rayDirection);
     }
 
     glm::vec3 lightDir = glm::normalize(light.position - intersect.point);
