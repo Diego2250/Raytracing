@@ -1,6 +1,7 @@
 #include <SDL.h>
 #include <SDL_events.h>
 #include <SDL_render.h>
+#include <SDL_image.h>
 #include <cstdlib>
 #include "glm/ext/quaternion_geometric.hpp"
 #include "glm/geometric.hpp"
@@ -93,6 +94,26 @@ Color castRay(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const s
         reflectedColor = castRay(offsetOrigin, reflectDir, recursion + 1);
     }
 
+    if (mat.texture != nullptr) {
+        int textureWidth = mat.texture->w;
+        int textureHeight = mat.texture->h;
+
+        float u = glm::clamp(glm::dot(intersect.normal, glm::vec3(1.0, 0.0, 0.0)), 0.0f, 1.0f);
+        float v = glm::clamp(glm::dot(intersect.normal, glm::vec3(0.0, 1.0, 0.0)), 0.0f, 1.0f);
+
+        int texX = static_cast<int>(u * textureWidth) % textureWidth;
+        int texY = static_cast<int>(v * textureHeight) % textureHeight;
+
+        Uint8* pixels = static_cast<Uint8*>(mat.texture->pixels);
+        Uint8 r = pixels[texY * mat.texture->pitch + texX * mat.texture->format->BytesPerPixel];
+        Uint8 g = pixels[texY * mat.texture->pitch + texX * mat.texture->format->BytesPerPixel + 1];
+        Uint8 b = pixels[texY * mat.texture->pitch + texX * mat.texture->format->BytesPerPixel + 2];
+
+        Color textureColor(r / 0.0f, g / 0.0f, b / 0.0f);
+
+        diffuseLight = textureColor;
+    }
+
     // If the material is refractive, cast a refracted ray
     Color refractedColor(0.0f, 0.0f, 0.0f);
     if (mat.transparency > 0) {
@@ -106,14 +127,25 @@ Color castRay(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const s
     return color;
 }
 
+SDL_Surface* loadTexture(const std::string& file) {
+    SDL_Surface* surface = IMG_Load(file.c_str());
+    if (surface == nullptr) {
+        std::cerr << "Unable to load image: " << IMG_GetError() << std::endl;
+    }
+    return surface;
+}
+
 void setUp() {
-    Material rubber = {
-            Color(80, 0, 0),   // diffuse
-            0.9,
-            0.1,
-            10.0f,
+
+
+    Material stone = {
+            Color(255, 255, 255),   // diffuse
+            0.1f,
+            1.0f,
+            125.0f,
             0.0f,
-            0.0f
+            0.0f,
+            0.0f,
     };
 
     Material ivory = {
@@ -145,30 +177,30 @@ void setUp() {
     );
 
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 0.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 0.0f), 1.0f, stone));
     objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, 0.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, 0.0f), 1.0f, ivory));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -1.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -1.0f), 1.0f, stone));
     objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -1.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -1.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, -1.0f), 1.0f, ivory));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -2.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -2.0f), 1.0f, stone));
     objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -2.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, -2.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -2.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, -2.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, -2.0f), 1.0f, ivory));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -3.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -3.0f), 1.0f, stone));
     objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -3.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, -3.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -3.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, -3.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, -3.0f), 1.0f, ivory));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -4.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -4.0f), 1.0f, stone));
     objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -4.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, -4.0f), 1.0f, ivory));
     objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -4.0f), 1.0f, ivory));
@@ -176,34 +208,34 @@ void setUp() {
     objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, -4.0f), 1.0f, ivory));
 
     //pared
-    objects.push_back(new Cube(glm::vec3(0.0f, -2.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -2.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(-2.0f, -2.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(1.0f, -2.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(2.0f, -2.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(3.0f, -2.0f, -5.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(0.0f, -2.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -2.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -2.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(1.0f, -2.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(2.0f, -2.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(3.0f, -2.0f, -5.0f), 1.0f, stone));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -1.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -1.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(-2.0f, -1.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(1.0f, -1.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(2.0f, -1.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(3.0f, -1.0f, -5.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(0.0f, -1.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -1.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -1.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(1.0f, -1.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(2.0f, -1.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(3.0f, -1.0f, -5.0f), 1.0f, stone));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, 0.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(-1.0f, 0.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(1.0f, 0.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(2.0f, 0.0f, -5.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(3.0f, 0.0f, -5.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(0.0f, 0.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-1.0f, 0.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(1.0f, 0.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(2.0f, 0.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(3.0f, 0.0f, -5.0f), 1.0f, stone));
 
-    objects.push_back(new Cube(glm::vec3(4.0f, 0.0f, -4.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, -4.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -4.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(4.0f, 0.0f, -4.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, -4.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -4.0f), 1.0f, stone));
 
-    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, -3.0f), 1.0f, rubber));
-    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -3.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, -3.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -3.0f), 1.0f, stone));
 
-    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -2.0f), 1.0f, rubber));
+    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -2.0f), 1.0f, stone));
 
 
 }
