@@ -1,7 +1,6 @@
 #include <SDL.h>
 #include <SDL_events.h>
 #include <SDL_render.h>
-#include <SDL_image.h>
 #include <cstdlib>
 #include "glm/ext/quaternion_geometric.hpp"
 #include "glm/geometric.hpp"
@@ -9,44 +8,78 @@
 #include "glm/glm.hpp"
 #include <vector>
 #include "print.h"
-#include "cube.h"
+#include <SDL_image.h>
 #include "skybox.h"
 
 #include "color.h"
+#include "intersect.h"
 #include "object.h"
 #include "sphere.h"
 #include "light.h"
 #include "camera.h"
+#include "cube.h"
+
 
 const int SCREEN_WIDTH = 800;
 const int SCREEN_HEIGHT = 600;
 const float ASPECT_RATIO = static_cast<float>(SCREEN_WIDTH) / static_cast<float>(SCREEN_HEIGHT);
-const int MAX_RECURSION_DEPTH = 3;
-const float SHADOW_BIAS = 0.0001f;
+const int MAX_RECURSION = 1;
+const float BIAS = 0.0001f;
 
 SDL_Renderer* renderer;
 std::vector<Object*> objects;
-Light light(glm::vec3(5.0, 4, 10), 1.0f, Color(255, 255, 255));
-Camera camera(glm::vec3(0.0, 0.0, 10.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 10.0f);
+Light light(glm::vec3(-5.0, 6.0, 15.0f), 1.5f, Color(255, 255, 255));
+Camera camera(glm::vec3(-5.0, 3.0, 15.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 10.0f);
+
+SDL_Surface* loadTexture(const std::string& file) {
+    SDL_Surface* surface = IMG_Load(file.c_str());
+    if (surface == nullptr) {
+        std::cerr << "Unable to load image: " << IMG_GetError() << std::endl;
+    }
+    return surface;
+}
+
 Skybox skybox("../assets/sky.png");
+
+
+Color getColorFromSurface(SDL_Surface* surface, float u, float v) {
+    Color color = {0, 0, 0, 0};  // Inicializa el color como negro por defecto
+
+    if (surface != NULL) {
+        if (u < 0) u += 1.0f;
+        if (v < 0) v += 1.0f;
+
+
+        int x = static_cast<int>(u * surface->w);
+        int y = static_cast<int>(v * surface->h);
+
+        Uint32 pixel = 0;
+        Uint8 *p = (Uint8 *)surface->pixels + y * surface->pitch + x * surface->format->BytesPerPixel;
+        memcpy(&pixel, p, surface->format->BytesPerPixel);
+
+        SDL_GetRGBA(pixel, surface->format, &color.r, &color.g, &color.b, &color.a);
+    }
+
+    return color;
+}
+
 
 void point(glm::vec2 position, Color color) {
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderDrawPoint(renderer, position.x, position.y);
 }
 
-
-float castShadow(const glm::vec3& shadowOrig, const glm::vec3& lightDir, const std::vector<Object*>& objects, Object* hitObject) {
+float castShadow(const glm::vec3& shadowOrigin, const glm::vec3& lightDir, Object* hitObject) {
     for (auto& obj : objects) {
         if (obj != hitObject) {
-            Intersect shadowIntersect = obj->rayIntersect(shadowOrig, lightDir);
-            if (shadowIntersect.isIntersecting && shadowIntersect.dist > 0) {  // zbuffer?
-                const float shadowIntensity =  (1.0f - glm::min(1.0f, shadowIntersect.dist / glm::length(light.position - shadowOrig)));
-                return shadowIntensity;
+            Intersect shadowIntersect = obj->rayIntersect(shadowOrigin, lightDir);
+            if (shadowIntersect.isIntersecting && shadowIntersect.dist > 0) {
+                float shadowRatio = shadowIntersect.dist / glm::length(light.position - shadowOrigin);
+                shadowRatio = glm::min(1.0f, shadowRatio);
+                return 1.0f - shadowRatio;
             }
         }
     }
-
     return 1.0f;
 }
 
@@ -64,178 +97,307 @@ Color castRay(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const s
         }
     }
 
-    if (!intersect.isIntersecting || recursion >= MAX_RECURSION_DEPTH) {
+    if (!intersect.isIntersecting || recursion >= MAX_RECURSION) {
         return skybox.getColor(rayDirection);
     }
 
-    glm::vec3 lightDir = glm::normalize(light.position - intersect.point);
-    glm::vec3 viewDir = glm::normalize(rayOrigin - intersect.point);
-    glm::vec3 reflectDir = glm::reflect(-lightDir, intersect.normal);
+    glm::vec3 lightDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * glm::normalize(light.position - intersect.point);
+    glm::vec3 viewDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * glm::normalize(rayOrigin - intersect.point);
 
-    float shadowIntensity = castShadow(
-            intersect.point + intersect.normal,
-            lightDir, objects, hitObject);
+    glm::vec3 reflectDirObjSpace = glm::reflect(-lightDirObjSpace, intersect.normal);
 
-    float diffuseLightIntensity = std::max(0.0f, glm::dot(intersect.normal, lightDir));
-    float specReflection = glm::dot(viewDir, reflectDir);
+    float shadowIntensity = castShadow(intersect.point, lightDirObjSpace, hitObject);
+
+    float diffuseLightIntensity = glm::max(0.0f, glm::dot(intersect.normal, lightDirObjSpace));
+    float specLightIntensity = std::pow(glm::max(0.0f, glm::dot(viewDirObjSpace, reflectDirObjSpace)), hitObject->material.specularCoefficient);
+
+    // Reflección y refracción
+    Color reflectedColor(0.0f, 0.0f, 0.0f);
+    if (hitObject->material.reflectivity > 0) {
+        glm::vec3 origin = intersect.point + intersect.normal * BIAS;
+        glm::vec3 reflectedRayDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * reflectDirObjSpace;
+        reflectedColor = castRay(origin, reflectedRayDirObjSpace, recursion + 1);
+    }
+
+    Color refractedColor(0.0f, 0.0f, 0.0f);
+    if (hitObject->material.transparency > 0) {
+        glm::vec3 origin = intersect.point - intersect.normal * BIAS;
+        glm::vec3 refractDirObjSpace = glm::mat3(glm::transpose(glm::inverse(hitObject->getTransformMatrix()))) * glm::refract(rayDirection, intersect.normal, hitObject->material.refractionIndex);
+        refractedColor = castRay(origin, refractDirObjSpace, recursion + 1);
+    }
 
     Material mat = hitObject->material;
-
-    float specLightIntensity = std::pow(std::max(0.0f, glm::dot(viewDir, reflectDir)), mat.specularCoefficient);
-
-    Color diffuseLight = mat.diffuse * light.intensity * diffuseLightIntensity * mat.albedo * shadowIntensity;
-    Color specularLight = light.color * light.intensity * specLightIntensity * mat.specularAlbedo * shadowIntensity;
-
-
-    // If the material is reflective, cast a reflected ray
-    Color reflectedColor(0.0f, 0.0f, 0.0f);
-    if (mat.reflectivity > 0) {
-        glm::vec3 offsetOrigin = intersect.point + intersect.normal * SHADOW_BIAS;
-        reflectedColor = castRay(offsetOrigin, reflectDir, recursion + 1);
-    }
-
+    Color diffusecolor;
     if (mat.texture != nullptr) {
-        int textureWidth = mat.texture->w;
-        int textureHeight = mat.texture->h;
-
-        float u = glm::clamp(glm::dot(intersect.normal, glm::vec3(1.0, 0.0, 0.0)), 0.0f, 1.0f);
-        float v = glm::clamp(glm::dot(intersect.normal, glm::vec3(0.0, 1.0, 0.0)), 0.0f, 1.0f);
-
-        int texX = static_cast<int>(u * textureWidth) % textureWidth;
-        int texY = static_cast<int>(v * textureHeight) % textureHeight;
-
-        Uint8* pixels = static_cast<Uint8*>(mat.texture->pixels);
-        Uint8 r = pixels[texY * mat.texture->pitch + texX * mat.texture->format->BytesPerPixel];
-        Uint8 g = pixels[texY * mat.texture->pitch + texX * mat.texture->format->BytesPerPixel + 1];
-        Uint8 b = pixels[texY * mat.texture->pitch + texX * mat.texture->format->BytesPerPixel + 2];
-
-        Color textureColor(r / 0.0f, g / 0.0f, b / 0.0f);
-
-        diffuseLight = textureColor;
+        diffusecolor = getColorFromSurface(mat.texture, intersect.u, intersect.v);
+    } else {
+        diffusecolor = mat.diffuse;
     }
 
-    // If the material is refractive, cast a refracted ray
-    Color refractedColor(0.0f, 0.0f, 0.0f);
-    if (mat.transparency > 0) {
-        glm::vec3 refractDir = glm::refract(rayDirection, intersect.normal, mat.refractionIndex);
-        glm::vec3 offsetOrigin = intersect.point - intersect.normal * SHADOW_BIAS; // moving along opposite to normal for refraction ray
-        refractedColor = castRay(offsetOrigin, refractDir, recursion + 1);
-    }
+    // Cálculos de luz difusa y especular
+    Color diffuseLight = diffusecolor * light.intensity * diffuseLightIntensity * hitObject->material.albedo * shadowIntensity;
+    Color specularLight = light.color * light.intensity * specLightIntensity * hitObject->material.specularAlbedo * shadowIntensity;
 
-    Color color = (diffuseLight + specularLight) * (1 - mat.reflectivity - mat.transparency) + reflectedColor * mat.reflectivity + refractedColor * mat.transparency;
-
+    // Combinación de los componentes de iluminación y efectos
+    Color color = (diffuseLight + specularLight) * (1.0f - hitObject->material.reflectivity - hitObject->material.transparency) + reflectedColor * hitObject->material.reflectivity + refractedColor * hitObject->material.transparency;
     return color;
 }
 
-SDL_Surface* loadTexture(const std::string& file) {
-    SDL_Surface* surface = IMG_Load(file.c_str());
-    if (surface == nullptr) {
-        std::cerr << "Unable to load image: " << IMG_GetError() << std::endl;
-    }
-    return surface;
-}
 
 void setUp() {
 
-
     Material stone = {
-            Color(255, 255, 255),   // diffuse
-            0.1f,
-            1.0f,
-            125.0f,
+            Color(80, 0, 0),   // diffuse
+            0.3,
+            0.5,
+            3.0f,
             0.0f,
             0.0f,
-            0.0f,
+            1.6f,
+            loadTexture("../assets/stone.png")
     };
 
-    Material ivory = {
-            Color(100, 100, 80),
-            0.5,
-            0.5,
-            50.0f,
+    //Era lava pero termino pareciendo esmeralda :/
+    Material lava = {
+            Color(80, 0, 0),
+            0.9f,
+            1.0f,
+            150.0f,
             0.2f,
-            0.0f
+            0.0f,
+            0.0f,
+            loadTexture("../assets/lava.png")
     };
 
-    Material mirror(
-            Color(255, 255, 255),
+    //diamond que terminó siendo carbon :/
+
+    Material diamond(
+            Color(80, 0, 0),   // diffuse
+            0.3,
+            0.5,
+            3.0f,
             0.0f,
-            10.0f,
-            1425.0f,
-            0.9f,
-            0.0f
+            0.0f,
+            1.6f,
+            loadTexture("../assets/diamond.png")
+
     );
 
-    Material glass(
-            Color(255, 255, 255),
-            0.1f,
-            1.0f,
-            125.0f,
+    //iron
+    Material iron(
+            Color(80, 0, 0),   // diffuse
+            0.3,
+            0.5,
+            3.0f,
             0.0f,
-            0.9f,
-            0.1f
+            0.0f,
+            1.6f,
+            loadTexture("../assets/iron.png")
+
     );
 
+    // diamond block
+    Material spawner(
+            Color(80, 0, 0),   // diffuse
+            0.3,
+            0.5,
+            3.0f,
+            0.0f,
+            0.0f,
+            1.6f,
+            loadTexture("../assets/obsidian.png")
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 0.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, 0.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, 0.0f), 1.0f, ivory));
+    );
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -1.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -1.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -1.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, -1.0f), 1.0f, ivory));
+    // dirt block
+    Material dirt(
+            Color(255, 255, 255),   // diffuse
+            0.3,
+            0.5,
+            3.0f,
+            0.0f,
+            0.0f,
+            1.6f,
+            loadTexture("../assets/dirt.png")
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -2.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -2.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, -2.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -2.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, -2.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, -2.0f), 1.0f, ivory));
+    );
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -3.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -3.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, -3.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -3.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, -3.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, -3.0f), 1.0f, ivory));
+    // portal
+    Material portal(
+            Color(75,0,130),   // diffuse
+            0.3,
+            0.5,
+            3.0f,
+            0.0f,
+            0.2f,
+            0.0f,
+            loadTexture("../assets/portal.png")
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -4.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -4.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, -4.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -4.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, -4.0f), 1.0f, ivory));
-    objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, -4.0f), 1.0f, ivory));
+    );
+
+    // Piso
+    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, 1.0f), glm::vec3(2.0f, -2.0f, 2.0f), lava));
+    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, 0.0f), glm::vec3(2.0f, -2.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, 2.0f), glm::vec3(2.0f, -2.0f, 3.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, 3.0f), glm::vec3(2.0f, -2.0f, 4.0f), stone));
+    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, 4.0f), glm::vec3(2.0f, -2.0f, 5.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(1.0f, -3.0f, -1.0f), glm::vec3(2.0f, -2.0f, 0.0f), stone));
+
+    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, -1.0f), glm::vec3(3.0f, -2.0f, 0.0f), lava));
+    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, 2.0f), glm::vec3(3.0f, -2.0f, 3.0f), stone));
+    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, 1.0f), glm::vec3(3.0f, -2.0f, 2.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, 0.0f), glm::vec3(3.0f, -2.0f, 1.0f), lava));
+    objects.push_back(new Cube(glm::vec3(2.0f, -3.0f, 3.0f), glm::vec3(3.0f, -2.0f, 4.0f), stone));
+
+    objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, -1.0f), glm::vec3(4.0f, -2.0f, 0.0f), stone));
+    objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, 0.0f), glm::vec3(4.0f, -2.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, 1.0f), glm::vec3(4.0f, -2.0f, 2.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(3.0f, -3.0f, 2.0f), glm::vec3(4.0f, -2.0f, 3.0f), stone));
+
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, -1.0f), glm::vec3(1.0f, -2.0f, 0.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 0.0f), glm::vec3(1.0f, -2.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 1.0f), glm::vec3(1.0f, -2.0f, 2.0f), iron));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 2.0f), glm::vec3(1.0f, -2.0f, 3.0f), stone));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 3.0f), glm::vec3(1.0f, -2.0f, 4.0f), iron));
+    objects.push_back(new Cube(glm::vec3(0.0f, -3.0f, 4.0f), glm::vec3(1.0f, -2.0f, 5.0f), stone));
+
+    objects.push_back(new Cube(glm::vec3(0.0f, -2.0f, 1.0f), glm::vec3(1.0f, -1.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(1.0f, -2.0f, 1.0f), glm::vec3(2.0f, -1.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -2.0f, 1.0f), glm::vec3(0.0f, -1.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -2.0f, 1.0f), glm::vec3(-1.0f, -1.0f, 2.0f), spawner));
+
+    objects.push_back(new Cube(glm::vec3(1.0f, -1.0f, 1.0f), glm::vec3(2.0f, 0.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(1.0f, 0.0f, 1.0f), glm::vec3(2.0f, 1.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(2.0f, 2.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), spawner));
+
+    objects.push_back(new Cube(glm::vec3(-2.0f, -1.0f, 1.0f), glm::vec3(-1.0f, 0.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 0.0f, 1.0f), glm::vec3(-1.0f, 1.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 1.0f, 1.0f), glm::vec3(-1.0f, 2.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), spawner));
+
+
+    objects.push_back(new Cube(glm::vec3(-1.0f, 0.0f, 1.0f), glm::vec3(0.0f, 1.0f, 2.0f), portal));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -1.0f, 1.0f), glm::vec3(0.0f, 0.0f, 2.0f), portal));
+    objects.push_back(new Cube(glm::vec3(-1.0f, 1.0f, 1.0f), glm::vec3(0.0f, 2.0f, 2.0f), portal));
+    objects.push_back(new Cube(glm::vec3(0.0f, -1.0f, 1.0f), glm::vec3(1.0f, 0.0f, 2.0f), portal));
+    objects.push_back(new Cube(glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(1.0f, 1.0f, 2.0f), portal));
+    objects.push_back(new Cube(glm::vec3(0.0f, 1.0f, 1.0f), glm::vec3(1.0f, 2.0f, 2.0f), portal));
+
+
+
+    objects.push_back(new Cube(glm::vec3(0.0f, 2.0f, 1.0f), glm::vec3(1.0f, 3.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, 1.0f), glm::vec3(2.0f, 3.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(-1.0f, 2.0f, 1.0f), glm::vec3(0.0f, 3.0f, 2.0f), spawner));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, 1.0f), glm::vec3(-1.0f, 3.0f, 2.0f), spawner));
+
+
+    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, -1.0f), glm::vec3(0.0f, -2.0f, 0.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, 0.0f), glm::vec3(0.0f, -2.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, 1.0f), glm::vec3(0.0f, -2.0f, 2.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, 2.0f), glm::vec3(0.0f, -2.0f, 3.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, 3.0f), glm::vec3(0.0f, -2.0f, 4.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -3.0f, 4.0f), glm::vec3(0.0f, -2.0f, 5.0f), stone));
+
+
+    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, -1.0f), glm::vec3(-1.0f, -2.0f, 0.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, 0.0f), glm::vec3(-1.0f, -2.0f, 1.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, 1.0f), glm::vec3(-1.0f, -2.0f, 2.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, 2.0f), glm::vec3(-1.0f, -2.0f, 3.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, 3.0f), glm::vec3(-1.0f, -2.0f, 4.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -3.0f, 4.0f), glm::vec3(-1.0f, -2.0f, 5.0f), stone));
+
+    objects.push_back(new Cube(glm::vec3(-3.0f, -3.0f, -1.0f), glm::vec3(-2.0f, -2.0f, 0.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(-3.0f, -3.0f, 0.0f), glm::vec3(-2.0f, -2.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-3.0f, -3.0f, 1.0f), glm::vec3(-2.0f, -2.0f, 2.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(-3.0f, -3.0f, 2.0f), glm::vec3(-2.0f, -2.0f, 3.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-3.0f, -3.0f, 3.0f), glm::vec3(-2.0f, -2.0f, 4.0f), stone));
+
+
 
     //pared
-    objects.push_back(new Cube(glm::vec3(0.0f, -2.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -2.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-2.0f, -2.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(1.0f, -2.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(2.0f, -2.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(3.0f, -2.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-3.0f, -2.0f, -2.0f), glm::vec3(-2.0f, -1.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -2.0f, -2.0f), glm::vec3(-1.0f, -1.0f, -1.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -2.0f, -2.0f), glm::vec3(0.0f, -1.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(0.0f, -2.0f, -2.0f), glm::vec3(1.0f, -1.0f, -1.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(1.0f, -2.0f, -2.0f), glm::vec3(2.0f, -1.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(2.0f, -2.0f, -2.0f), glm::vec3(3.0f, -1.0f, -1.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(3.0f, -2.0f, -2.0f), glm::vec3(4.0f, -1.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -2.0f), glm::vec3(5.0f, -1.0f, -1.0f), stone));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, -1.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-1.0f, -1.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-2.0f, -1.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(1.0f, -1.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(2.0f, -1.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(3.0f, -1.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-3.0f, -1.0f, -2.0f), glm::vec3(-2.0f, 0.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, -1.0f, -2.0f), glm::vec3(-1.0f, 0.0f, -1.0f), lava));
+    objects.push_back(new Cube(glm::vec3(-1.0f, -1.0f, -2.0f), glm::vec3(0.0f, 0.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(0.0f, -1.0f, -2.0f), glm::vec3(1.0f, 0.0f, -1.0f), lava));
+    objects.push_back(new Cube(glm::vec3(1.0f, -1.0f, -2.0f), glm::vec3(2.0f, 0.0f, -1.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(2.0f, -1.0f, -2.0f), glm::vec3(3.0f, 0.0f, -1.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(3.0f, -1.0f, -2.0f), glm::vec3(4.0f, 0.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, -2.0f), glm::vec3(5.0f, 0.0f, -1.0f), stone));
 
-    objects.push_back(new Cube(glm::vec3(0.0f, 0.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(-1.0f, 0.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(1.0f, 0.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(2.0f, 0.0f, -5.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(3.0f, 0.0f, -5.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-3.0f, 0.0f, -2.0f), glm::vec3(-2.0f, 1.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 0.0f, -2.0f), glm::vec3(-1.0f, 1.0f, -1.0f), lava));
+    objects.push_back(new Cube(glm::vec3(-1.0f, 0.0f, -2.0f), glm::vec3(0.0f, 1.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(0.0f, 0.0f, -2.0f), glm::vec3(1.0f, 1.0f, -1.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(1.0f, 0.0f, -2.0f), glm::vec3(2.0f, 1.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(2.0f, 0.0f, -2.0f), glm::vec3(3.0f, 1.0f, -1.0f), lava));
+    objects.push_back(new Cube(glm::vec3(3.0f, 0.0f, -2.0f), glm::vec3(4.0f, 1.0f, -1.0f), stone));
 
-    objects.push_back(new Cube(glm::vec3(4.0f, 0.0f, -4.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, -4.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -4.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-3.0f, 1.0f, -2.0f), glm::vec3(-2.0f, 2.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 1.0f, -2.0f), glm::vec3(-1.0f, 2.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-1.0f, 1.0f, -2.0f), glm::vec3(0.0f, 2.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(0.0f, 1.0f, -2.0f), glm::vec3(1.0f, 2.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(1.0f, 1.0f, -2.0f), glm::vec3(2.0f, 2.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(2.0f, 1.0f, -2.0f), glm::vec3(3.0f, 2.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(3.0f, 1.0f, -2.0f), glm::vec3(4.0f, 2.0f, -1.0f), stone));
 
-    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, -3.0f), 1.0f, stone));
-    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -3.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-3.0f, 2.0f, -2.0f), glm::vec3(-2.0f, 3.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 2.0f, -2.0f), glm::vec3(-1.0f, 3.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-1.0f, 2.0f, -2.0f), glm::vec3(0.0f, 3.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(0.0f, 2.0f, -2.0f), glm::vec3(1.0f, 3.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(1.0f, 2.0f, -2.0f), glm::vec3(2.0f, 3.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(2.0f, 2.0f, -2.0f), glm::vec3(3.0f, 3.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(3.0f, 2.0f, -2.0f), glm::vec3(4.0f, 3.0f, -1.0f), stone));
 
-    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -2.0f), 1.0f, stone));
+    objects.push_back(new Cube(glm::vec3(-3.0f, 3.0f, -2.0f), glm::vec3(-2.0f, 4.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(-2.0f, 3.0f, -2.0f), glm::vec3(-1.0f, 4.0f, -1.0f), lava));
+    objects.push_back(new Cube(glm::vec3(-1.0f, 3.0f, -2.0f), glm::vec3(0.0f, 4.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(0.0f, 3.0f, -2.0f), glm::vec3(1.0f, 4.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(1.0f, 3.0f, -2.0f), glm::vec3(2.0f, 4.0f, -1.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(2.0f, 3.0f, -2.0f), glm::vec3(3.0f, 4.0f, -1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(3.0f, 3.0f, -2.0f), glm::vec3(4.0f, 4.0f, -1.0f), stone));
+
+
+    objects.push_back(new Cube(glm::vec3(4.0f, 1.0f, -1.0f), glm::vec3(5.0f, 2.0f, 0.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, 1.0f, 0.0f), glm::vec3(5.0f, 2.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, 1.0f, 1.0f), glm::vec3(5.0f, 2.0f, 2.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, 1.0f, 2.0f), glm::vec3(5.0f, 2.0f, 3.0f), stone));
+
+    objects.push_back(new Cube(glm::vec3(4.0f, 2.0f, -1.0f), glm::vec3(5.0f, 3.0f, 0.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, 2.0f, 0.0f), glm::vec3(5.0f, 3.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, 2.0f, 1.0f), glm::vec3(5.0f, 3.0f, 2.0f), diamond));
+
+    objects.push_back(new Cube(glm::vec3(4.0f, 3.0f, -1.0f), glm::vec3(5.0f, 4.0f, 0.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(4.0f, 3.0f, 0.0f), glm::vec3(5.0f, 4.0f, 1.0f), stone));
+
+
+    objects.push_back(new Cube(glm::vec3(4.0f, 0.0f, -1.0f), glm::vec3(5.0f, 1.0f, 0.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(4.0f, 0.0f, 0.0f), glm::vec3(5.0f, 1.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, 0.0f, 1.0f), glm::vec3(5.0f, 1.0f, 2.0f), lava));
+    objects.push_back(new Cube(glm::vec3(4.0f, 0.0f, 2.0f), glm::vec3(5.0f, 1.0f, 3.0f), stone));
+
+
+    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, -1.0f), glm::vec3(5.0f, 0.0f, 0.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, 0.0f), glm::vec3(5.0f, 0.0f, 1.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, 1.0f), glm::vec3(5.0f, 0.0f, 2.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(4.0f, -1.0f, 2.0f), glm::vec3(5.0f, 0.0f, 3.0f), stone));
+
+    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, -1.0f), glm::vec3(5.0f, -1.0f, 0.0f), stone));
+    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, 0.0f), glm::vec3(5.0f, -1.0f, 1.0f), dirt));
+    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, 1.0f), glm::vec3(5.0f, -1.0f, 2.0f), diamond));
+    objects.push_back(new Cube(glm::vec3(4.0f, -2.0f, 2.0f), glm::vec3(5.0f, -1.0f, 3.0f), stone));
+
 
 
 }
@@ -244,13 +406,6 @@ void render() {
     float fov = 3.1415/3;
     for (int y = 0; y < SCREEN_HEIGHT; y++) {
         for (int x = 0; x < SCREEN_WIDTH; x++) {
-            /*
-            float random_value = static_cast<float>(std::rand())/static_cast<float>(RAND_MAX);
-            if (random_value < 0.0) {
-                continue;
-            }
-            */
-
 
             float screenX = (2.0f * (x + 0.5f)) / SCREEN_WIDTH - 1.0f;
             float screenY = -(2.0f * (y + 0.5f)) / SCREEN_HEIGHT + 1.0f;
@@ -267,15 +422,18 @@ void render() {
                     cameraDir + cameraX * screenX + cameraY * screenY
             );
 
-            Color pixelColor = castRay(camera.position, rayDirection);
-            /* Color pixelColor = castRay(glm::vec3(0,0,20), glm::normalize(glm::vec3(screenX, screenY, -1.0f))); */
 
-            point(glm::vec2(x, y), pixelColor);
+            Color pixelColor = castRay(camera.position, rayDirection);
+            //std::cout << pixelColor.i << std::endl;
+            if (pixelColor.i != 1) {
+                point(glm::vec2(x, y), pixelColor);
+            }
         }
     }
 }
 
-int SDL_main(int argc, char* argv[]) {
+
+int main(int argc, char* argv[]) {
     // Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         SDL_Log("Unable to initialize SDL: %s", SDL_GetError());
@@ -295,7 +453,7 @@ int SDL_main(int argc, char* argv[]) {
     }
 
     // Create a renderer
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
     if (!renderer) {
         SDL_Log("Unable to create renderer: %s", SDL_GetError());
@@ -312,7 +470,8 @@ int SDL_main(int argc, char* argv[]) {
     Uint32 currentTime = startTime;
 
     setUp();
-
+    float rotationSpeed = 0.5f;
+    bool reRender = true;
     while (running) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -322,18 +481,22 @@ int SDL_main(int argc, char* argv[]) {
             if (event.type == SDL_KEYDOWN) {
                 switch(event.key.keysym.sym) {
                     case SDLK_UP:
-                        camera.move(-1.0f);
+                        camera.move(1.0f);
+                        reRender = true;
                         break;
                     case SDLK_DOWN:
-                        camera.move(1.0f);
+                        camera.move(-1.0f);
+                        reRender = true;
                         break;
                     case SDLK_LEFT:
                         print("left");
                         camera.rotate(-1.0f, 0.0f);
+                        reRender = true;
                         break;
                     case SDLK_RIGHT:
                         print("right");
                         camera.rotate(1.0f, 0.0f);
+                        reRender = true;
                         break;
                 }
             }
@@ -341,11 +504,13 @@ int SDL_main(int argc, char* argv[]) {
 
         }
 
-        // Clear the screen
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
+        if (reRender) {
+            reRender = false;
 
-        render();
+            render();
+        }
+
+
 
         // Present the renderer
         SDL_RenderPresent(renderer);
@@ -355,7 +520,7 @@ int SDL_main(int argc, char* argv[]) {
         // Calculate and display FPS
         if (SDL_GetTicks() - currentTime >= 1000) {
             currentTime = SDL_GetTicks();
-            std::string title = "Hello World - FPS: " + std::to_string(frameCount);
+            std::string title = "Raytracing - FPS: " + std::to_string(frameCount);
             SDL_SetWindowTitle(window, title.c_str());
             frameCount = 0;
         }

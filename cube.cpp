@@ -1,42 +1,94 @@
-// cube.cpp
 #include "cube.h"
 
-Cube::Cube(const glm::vec3& position, float size, const Material& mat)
-        : position(position), size(size), Object(mat) {}
+Cube::Cube(const glm::vec3& minCorner, const glm::vec3& maxCorner, const Material& mat)
+        : minCorner(minCorner), maxCorner(maxCorner), Object(mat) {}
 
 Intersect Cube::rayIntersect(const glm::vec3& rayOrigin, const glm::vec3& rayDirection) const {
-    glm::vec3 halfSize = glm::vec3(size) * 0.5f;
-    glm::vec3 minBound = position - halfSize;
-    glm::vec3 maxBound = position + halfSize;
+    float tmin = (minCorner.x - rayOrigin.x) / rayDirection.x;
+    float tmax = (maxCorner.x - rayOrigin.x) / rayDirection.x;
 
-    glm::vec3 invDirection = 1.0f / rayDirection;
+    if (tmin > tmax) {
+        std::swap(tmin, tmax);
+    }
 
-    float t1 = (minBound.x - rayOrigin.x) * invDirection.x;
-    float t2 = (maxBound.x - rayOrigin.x) * invDirection.x;
-    float t3 = (minBound.y - rayOrigin.y) * invDirection.y;
-    float t4 = (maxBound.y - rayOrigin.y) * invDirection.y;
-    float t5 = (minBound.z - rayOrigin.z) * invDirection.z;
-    float t6 = (maxBound.z - rayOrigin.z) * invDirection.z;
+    float tymin = (minCorner.y - rayOrigin.y) / rayDirection.y;
+    float tymax = (maxCorner.y - rayOrigin.y) / rayDirection.y;
 
-    float tmin = glm::max(glm::max(glm::min(t1, t2), glm::min(t3, t4)), glm::min(t5, t6));
-    float tmax = glm::min(glm::min(glm::max(t1, t2), glm::max(t3, t4)), glm::max(t5, t6));
+    if (tymin > tymax) {
+        std::swap(tymin, tymax);
+    }
 
-    if (tmax < 0 || tmin > tmax) {
+    if ((tmin > tymax) || (tymin > tmax)) {
         return Intersect{false};
     }
 
-    float t = (tmin < 0.0f) ? tmax : tmin;
+    if (tymin > tmin) {
+        tmin = tymin;
+    }
 
-    glm::vec3 point = rayOrigin + t * rayDirection;
+    if (tymax < tmax) {
+        tmax = tymax;
+    }
 
-    // Compute normal based on the closest axis
-    glm::vec3 normal;
-    if (t == t1) normal = glm::vec3(-1, 0, 0);
-    else if (t == t2) normal = glm::vec3(1, 0, 0);
-    else if (t == t3) normal = glm::vec3(0, -1, 0);
-    else if (t == t4) normal = glm::vec3(0, 1, 0);
-    else if (t == t5) normal = glm::vec3(0, 0, -1);
-    else normal = glm::vec3(0, 0, 1);
+    float tzmin = (minCorner.z - rayOrigin.z) / rayDirection.z;
+    float tzmax = (maxCorner.z - rayOrigin.z) / rayDirection.z;
 
-    return Intersect{true, t, point, normal};
+    if (tzmin > tzmax) {
+        std::swap(tzmin, tzmax);
+    }
+
+    if ((tmin > tzmax) || (tzmin > tmax)) {
+        return Intersect{false};
+    }
+
+    if (tzmin > tmin) {
+        tmin = tzmin;
+    }
+
+    if (tzmax < tmax) {
+        tmax = tzmax;
+    }
+
+    if (tmin < 0 && tmax < 0) {
+        return Intersect{false};
+    }
+
+    glm::vec3 point = rayOrigin + tmin * rayDirection;
+    glm::vec3 normal = glm::normalize(point - minCorner);
+
+    glm::vec3 center = (minCorner + maxCorner) / 2.0f;
+    float edgeLength = maxCorner.x - minCorner.x;
+
+    glm::vec3 delta = rayOrigin + tmin * rayDirection - center;
+    glm::vec3 absDelta = glm::abs(delta);
+
+    // Determine which face was hit
+    if (absDelta.x > absDelta.y && absDelta.x > absDelta.z) {
+        normal = glm::vec3(delta.x > 0 ? 1 : -1, 0, 0);
+    } else if (absDelta.y > absDelta.z) {
+        normal = glm::vec3(0, delta.y > 0 ? 1 : -1, 0);
+    } else {
+        normal = glm::vec3(0, 0, delta.z > 0 ? 1 : -1);
+    }
+
+    // Calculate UV coordinates for the hit face
+    float tx, ty;
+    if (absDelta.x > absDelta.y && absDelta.x > absDelta.z) {
+        normal = glm::vec3(delta.x > 0 ? 1 : -1, 0, 0);
+        tx = (delta.y + edgeLength / 2) / edgeLength;
+        ty = (delta.z + edgeLength / 2) / edgeLength;
+    } else if (absDelta.y > absDelta.z) {
+        normal = glm::vec3(0, delta.y > 0 ? 1 : -1, 0);
+        tx = (delta.x + edgeLength / 2) / edgeLength;
+        ty = (delta.z + edgeLength / 2) / edgeLength;
+    } else {
+        normal = glm::vec3(0, 0, delta.z > 0 ? 1 : -1);
+        tx = (delta.x + edgeLength / 2) / edgeLength;
+        ty = (delta.y + edgeLength / 2) / edgeLength;
+    }
+
+    tx = glm::clamp(tx, 0.0f, 1.0f);
+    ty = glm::clamp(ty, 0.0f, 1.0f);
+
+    return Intersect{true, tmin, point, normal, tx, ty};
 }

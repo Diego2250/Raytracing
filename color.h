@@ -8,6 +8,7 @@ struct Color {
     Uint8 g;
     Uint8 b;
     Uint8 a;
+    int i = 0;
 
     Color() : r(0), g(0), b(0), a(255) {}
 
@@ -23,6 +24,10 @@ struct Color {
         g = std::clamp(static_cast<Uint8>(green * 255), Uint8(0), Uint8(255));
         b = std::clamp(static_cast<Uint8>(blue * 255), Uint8(0), Uint8(255));
         a = std::clamp(static_cast<Uint8>(alpha * 255), Uint8(0), Uint8(255));
+    }
+
+    Color(char* none) {
+        i = 1;
     }
 
     // Overload the + operator to add colors
@@ -45,6 +50,17 @@ struct Color {
         );
     }
 
+    Color operator*(Color color) const {
+        return Color(
+                std::clamp(static_cast<Uint8>(r * color.r), Uint8(0), Uint8(255)),
+                std::clamp(static_cast<Uint8>(g * color.g), Uint8(0), Uint8(255)),
+                std::clamp(static_cast<Uint8>(b * color.b), Uint8(0), Uint8(255)),
+                std::clamp(static_cast<Uint8>(a * color.a), Uint8(0), Uint8(255))
+        );
+    };
+
     // Friend function to allow float * Color
     friend Color operator*(float factor, const Color& color);
+
+
 };
